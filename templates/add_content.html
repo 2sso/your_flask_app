@@ -18,7 +18,7 @@
 <form class="edit-form" method="post">
     <div>
         <label for="body">내용:</label>
-        <textarea id="summernote" name="body" required>{{ content.body | safe }}</textarea>
+        <textarea id="summernote" name="body" required></textarea>
     </div>
     <div class="form-actions">
         <a href="{{ url_for('manage_content') }}" class="btn-cancel">취소</a>
@@ -40,7 +40,6 @@ $(document).ready(function() {
             }
         }
     });
-
     function uploadImage(file, editor) {
         const formData = new FormData();
         formData.append("file", file);
