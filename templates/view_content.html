@@ -5,7 +5,6 @@
 
 {% block content %}
 <style>
-    /* 이 페이지에서만 사용하는 스타일 */
     .content-title {
         font-size: 2.5em;
         font-weight: bold;
@@ -25,9 +24,20 @@
         font-size: 1.1em;
         line-height: 1.7;
         margin-bottom: 2.5rem;
-        white-space: pre-wrap; /* 줄바꿈 및 공백 유지 */
+        white-space: pre-wrap;
         color: #343a40;
     }
+    .content-body ol, .content-body ul {
+        padding-left: 20px;
+    }
+    .content-body li {
+        margin-bottom: 0.5em;
+    }
+    /* ★★★ 추가된 부분 ★★★ */
+    .content-body li p {
+        margin: 0; /* li 태그 안의 p 태그 여백 제거 */
+    }
+
     .back-link {
         display: inline-block;
         padding: 10px 20px;
@@ -52,7 +62,7 @@
 
         <a href="{{ url_for('subject_detail', subject_id=content.subject_id) }}" class="back-link">↩ {{ content.subject_name }} 목록으로 돌아가기</a>
     {% else %}
-        <p class="message error">콘텐츠를 찾을 수 없습니다.</p>
+        <p>콘텐츠를 찾을 수 없습니다.</p>
         <a href="{{ url_for('study_list') }}" class="back-link">↩ 전체 과목 목록으로 돌아가기</a>
     {% endif %}
 </div>
