@@ -1153,7 +1153,6 @@ def admin_dashboard():
 @app.route('/admin/add_content', methods=['GET', 'POST'])
 def add_content():
     """새로운 학습 콘텐츠를 등록하는 페이지 및 처리"""
-    # 관리자가 아니면 접근 차단
     if not is_admin():
         flash('접근 권한이 없습니다.', 'error')
         return redirect(url_for('index'))
@@ -1161,32 +1160,34 @@ def add_content():
     conn = None
     try:
         conn = get_db_connection()
-        if request.method == 'POST':
-            subject_id = request.form['subject_id']
-            content_type = request.form['content_type']
-            title = request.form['title'].strip()
-            body = request.form['body'].strip()
+        with conn.cursor() as cursor:
+            # POST 요청 처리
+            if request.method == 'POST':
+                subject_id = request.form['subject_id']
+                content_type = request.form['content_type']
+                title = request.form['title'].strip()
+                body = request.form['body'].strip()
 
-            if not all([subject_id, content_type, title, body]):
-                flash('모든 필드를 채워주세요.', 'error')
-                # GET 요청으로 넘어갈 때 subjects 목록이 필요하므로 아래로 이동
-            else:
-                with conn.cursor() as cursor:
-                    sql = "INSERT INTO contents (subject_id, content_type, title, body) VALUES (%s, %s, %s, %s)"
-                    cursor.execute(sql, (subject_id, content_type, title, body))
+                if not all([subject_id, content_type, title, body]):
+                    flash('모든 필드를 채워주세요.', 'error')
+                    # ★★★ 수정된 부분: 오류 발생 시에도 subjects를 다시 불러와 템플릿 렌더링 ★★★
+                    cursor.execute("SELECT id, name FROM subjects ORDER BY name ASC")
+                    subjects = cursor.fetchall()
+                    return render_template('add_content.html', subjects=subjects)
+
+                sql = "INSERT INTO contents (subject_id, content_type, title, body) VALUES (%s, %s, %s, %s)"
+                cursor.execute(sql, (subject_id, content_type, title, body))
                 conn.commit()
                 flash('새로운 콘텐츠가 성공적으로 등록되었습니다.', 'success')
                 return redirect(url_for('admin_dashboard'))
 
-        # GET 요청이거나 POST에서 오류가 있을 경우, 과목 목록을 불러와 폼을 렌더링
-        with conn.cursor() as cursor:
+            # GET 요청 처리
             cursor.execute("SELECT id, name FROM subjects ORDER BY name ASC")
             subjects = cursor.fetchall()
-
-        return render_template('add_content.html', subjects=subjects, username=session['username'])
+            return render_template('add_content.html', subjects=subjects)
 
     except Exception as e:
-        print(f"관리자 콘텐츠 추가 오류: {e}")
+        app.logger.error(f"Failed to add content: {e}", exc_info=True)
         flash('콘텐츠 추가 중 오류가 발생했습니다.', 'error')
         return redirect(url_for('admin_dashboard'))
     finally:
