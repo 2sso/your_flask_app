@@ -14,6 +14,8 @@ if os.path.exists(dotenv_path):
     load_dotenv(dotenv_path)
 
 app = Flask(__name__)
+# ★★★ 추가된 부분: 최대 요청 크기를 100MB로 설정 ★★★
+app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024  # 100MB
 app.secret_key = os.getenv('FLASK_SECRET_KEY', os.urandom(24).hex())
 
 DB_CONFIG = {
