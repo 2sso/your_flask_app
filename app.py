@@ -71,7 +71,7 @@ def register():
     if not all([username, phone_number, password]):
         flash('사용자 이름, 휴대폰 번호, 비밀번호를 모두 입력해주세요.', 'error')
         return redirect(url_for('index'))
-    
+
     if not is_valid_phone_number(phone_number):
         flash('올바른 핸드폰 번호 형식이 아닙니다. (예: 01012345678)', 'error')
         return redirect(url_for('index'))
@@ -89,7 +89,7 @@ def register():
             if cursor.fetchone():
                 flash('이미 존재하는 사용자 이름입니다.', 'error')
                 return redirect(url_for('index'))
-            
+
             cursor.execute("SELECT id FROM users WHERE phone_number = %s", (phone_number,))
             if cursor.fetchone():
                 flash('이미 등록된 휴대폰 번호입니다.', 'error')
@@ -105,6 +105,102 @@ def register():
         if conn:
             conn.close()
     return redirect(url_for('index'))
+
+# 관리자 학습 컨텐츠 관리
+@app.route('/admin/content')
+def manage_content():
+    """전체 학습 콘텐츠 목록을 보여주는 관리 페이지"""
+    if not is_admin():
+        flash('접근 권한이 없습니다.', 'error')
+        return redirect(url_for('index'))
+
+    conn = None
+    try:
+        conn = get_db_connection()
+        with conn.cursor() as cursor:
+            sql = """
+                SELECT c.id, c.title, c.content_type, s.name as subject_name
+                FROM contents c
+                JOIN subjects s ON c.subject_id = s.id
+                ORDER BY s.name, c.created_at DESC
+            """
+            cursor.execute(sql)
+            contents = cursor.fetchall()
+        return render_template('manage_content.html', contents=contents)
+    except Exception as e:
+        app.logger.error(f"Failed to load content list: {e}", exc_info=True)
+        flash('콘텐츠 목록을 불러오는 중 오류가 발생했습니다.', 'error')
+        return redirect(url_for('admin_dashboard'))
+    finally:
+        if conn:
+            conn.close()
+
+@app.route('/admin/edit_content/<int:content_id>', methods=['GET', 'POST'])
+def edit_content(content_id):
+    """기존 학습 콘텐츠를 수정하는 페이지"""
+    if not is_admin():
+        flash('접근 권한이 없습니다.', 'error')
+        return redirect(url_for('index'))
+
+    conn = None
+    try:
+        conn = get_db_connection()
+        with conn.cursor() as cursor:
+            if request.method == 'POST':
+                subject_id = request.form['subject_id']
+                content_type = request.form['content_type']
+                title = request.form['title'].strip()
+                body = request.form['body'].strip()
+
+                if not all([subject_id, content_type, title, body]):
+                    flash('모든 필드를 채워주세요.', 'error')
+                else:
+                    sql = "UPDATE contents SET subject_id=%s, content_type=%s, title=%s, body=%s WHERE id=%s"
+                    cursor.execute(sql, (subject_id, content_type, title, body, content_id))
+                    conn.commit()
+                    flash('콘텐츠가 성공적으로 수정되었습니다.', 'success')
+                    return redirect(url_for('manage_content'))
+
+            cursor.execute("SELECT * FROM contents WHERE id = %s", (content_id,))
+            content = cursor.fetchone()
+            if not content:
+                flash('존재하지 않는 콘텐츠입니다.', 'error')
+                return redirect(url_for('manage_content'))
+
+            cursor.execute("SELECT id, name FROM subjects ORDER BY name ASC")
+            subjects = cursor.fetchall()
+            return render_template('edit_content.html', content=content, subjects=subjects)
+
+    except Exception as e:
+        app.logger.error(f"Failed to edit content: {e}", exc_info=True)
+        flash('콘텐츠 처리 중 오류가 발생했습니다.', 'error')
+        return redirect(url_for('manage_content'))
+    finally:
+        if conn:
+            conn.close()
+
+@app.route('/admin/delete_content/<int:content_id>', methods=['POST'])
+def delete_content(content_id):
+    """특정 학습 콘텐츠를 삭제합니다."""
+    if not is_admin():
+        flash('접근 권한이 없습니다.', 'error')
+        return redirect(url_for('index'))
+
+    conn = None
+    try:
+        conn = get_db_connection()
+        with conn.cursor() as cursor:
+            cursor.execute("DELETE FROM contents WHERE id = %s", (content_id,))
+        conn.commit()
+        flash('콘텐츠가 삭제되었습니다.', 'success')
+    except Exception as e:
+        app.logger.error(f"Failed to delete content: {e}", exc_info=True)
+        flash('콘텐츠 삭제 중 오류가 발생했습니다.', 'error')
+    finally:
+        if conn:
+            conn.close()
+    return redirect(url_for('manage_content'))
+
 
 @app.route('/login', methods=['POST'])
 def login():
@@ -183,7 +279,7 @@ def reset_password():
     if request.method == 'POST':
         new_password = request.form['new_password'].strip()
         confirm_password = request.form['confirm_password'].strip()
-        
+
         if new_password != confirm_password:
             flash('새 비밀번호가 일치하지 않습니다.', 'error')
             return render_template('reset_password.html')
@@ -191,10 +287,10 @@ def reset_password():
         if not is_password_strong(new_password):
             flash('새 비밀번호는 8자 이상이며, 영문 대/소문자, 숫자, 특수문자를 모두 포함해야 합니다.', 'error')
             return render_template('reset_password.html')
-        
+
         hashed_password = generate_password_hash(new_password)
         phone_number = session['phone_to_reset']
-        
+
         conn = None
         try:
             conn = get_db_connection()
@@ -933,7 +1029,7 @@ def view_content(content_id):
             if not content:
                 flash('존재하지 않는 콘텐츠입니다.', 'error')
                 return redirect(url_for('study_list'))
-            
+
             subject_id_for_redirect = content['subject_id']
 
             # 접근 제어 로직
@@ -976,7 +1072,7 @@ def toggle_content_status(content_id):
             if not content:
                 flash('존재하지 않는 콘텐츠입니다.', 'error')
                 return redirect(url_for('study_list'))
-            
+
             subject_id = content['subject_id']
 
             # is_active 상태를 현재와 반대로(0->1, 1->0) 업데이트합니다.
@@ -1006,7 +1102,7 @@ def admin_dashboard():
     if not is_admin():
         flash('접근 권한이 없습니다.', 'error')
         return redirect(url_for('index'))
-    
+
     return render_template('admin_dashboard.html', username=session['username'])
 
 @app.route('/admin/add_content', methods=['GET', 'POST'])
@@ -1085,7 +1181,7 @@ def manage_subjects():
         with conn.cursor() as cursor:
             cursor.execute("SELECT id, name FROM subjects ORDER BY name ASC")
             subjects = cursor.fetchall()
-        
+
         return render_template('manage_subjects.html', subjects=subjects, username=session['username'])
 
     except Exception as e:
@@ -1122,14 +1218,14 @@ def edit_subject(subject_id):
                         conn.commit()
                         flash('과목 이름이 성공적으로 수정되었습니다.', 'success')
                         return redirect(url_for('manage_subjects'))
-            
+
             # GET 요청 처리 (수정할 과목 정보 불러오기)
             cursor.execute("SELECT id, name FROM subjects WHERE id = %s", (subject_id,))
             subject = cursor.fetchone()
             if not subject:
                 flash('존재하지 않는 과목입니다.', 'error')
                 return redirect(url_for('manage_subjects'))
-            
+
             return render_template('edit_subject.html', subject=subject, username=session['username'])
 
     except Exception as e:
@@ -1146,7 +1242,7 @@ def delete_subject(subject_id):
     if not is_admin():
         flash('접근 권한이 없습니다.', 'error')
         return redirect(url_for('index'))
-    
+
     conn = None
     try:
         conn = get_db_connection()
