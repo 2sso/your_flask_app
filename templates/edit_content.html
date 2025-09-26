@@ -12,10 +12,38 @@
 <script src="https://cdn.jsdelivr.net/npm/summernote@0.8.18/dist/lang/summernote-ko-KR.min.js"></script>
 
 <style>
-    /* ... (스타일은 이전과 동일) ... */
+    .edit-form label { margin-bottom: 8px; font-weight: 600; }
+    .edit-form input, .edit-form select { width: 100%; padding: 12px; margin-bottom: 1.5rem; border: 1px solid #ced4da; border-radius: 4px; box-sizing: border-box; font-size: 1em; }
+    .note-editor.note-frame { margin-bottom: 1.5rem; }
+    .form-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 1rem; }
+    .form-actions button, .form-actions a { padding: 10px 20px; border: none; border-radius: 5px; cursor: pointer; text-decoration: none; color: white; font-weight: 500; }
+    .btn-submit { background-color: #007bff; }
+    .btn-cancel { background-color: #6c757d; }
 </style>
 
 <form class="edit-form" method="post">
+    <div>
+        <label for="subject_id">과목 선택:</label>
+        <select id="subject_id" name="subject_id" required>
+            {% for subject in subjects %}
+                <option value="{{ subject.id }}" {% if subject.id == content.subject_id %}selected{% endif %}>
+                    {{ subject.name }}
+                </option>
+            {% endfor %}
+        </select>
+    </div>
+    <div>
+        <label for="content_type">콘텐츠 타입:</label>
+        <select id="content_type" name="content_type" required>
+            <option value="이론" {% if content.content_type == '이론' %}selected{% endif %}>이론</option>
+            <option value="실습" {% if content.content_type == '실습' %}selected{% endif %}>실습</option>
+        </select>
+    </div>
+    <div>
+        <label for="title">제목:</label>
+        <input type="text" id="title" name="title" value="{{ content.title }}" required>
+    </div>
+
     <div>
         <label for="body">내용:</label>
         <textarea id="summernote" name="body" required>{{ content.body | safe }}</textarea>
@@ -33,7 +61,6 @@ $(document).ready(function() {
         lang: "ko-KR",
         callbacks: {
             onImageUpload: function(files) {
-                // 여러 개의 파일을 모두 처리하도록 반복문으로 수정
                 for (let i = 0; i < files.length; i++) {
                     uploadImage(files[i], this);
                 }
