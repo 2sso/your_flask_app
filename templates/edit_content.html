@@ -20,7 +20,7 @@
     .btn-submit { background-color: #007bff; }
     .btn-cancel { background-color: #6c757d; }
     .storage-type-selector { margin-bottom: 1.5rem; }
-    .storage-type-selector label { margin-right: 1.5rem; }
+    .storage-type-selector label { margin-right: 1.5rem; font-weight: normal;}
 </style>
 
 <form class="edit-form" method="post" enctype="multipart/form-data">
@@ -28,6 +28,28 @@
         <strong>저장 방식 선택:</strong>
         <label><input type="radio" name="storage_type" value="editor" {% if content.storage_type == 'editor' %}checked{% endif %}> 에디터로 작성</label>
         <label><input type="radio" name="storage_type" value="pdf" {% if content.storage_type == 'pdf' %}checked{% endif %}> PDF 파일 업로드</label>
+    </div>
+
+    <div>
+        <label for="subject_id">과목 선택:</label>
+        <select id="subject_id" name="subject_id" required>
+            {% for subject in subjects %}
+                <option value="{{ subject.id }}" {% if subject.id == content.subject_id %}selected{% endif %}>
+                    {{ subject.name }}
+                </option>
+            {% endfor %}
+        </select>
+    </div>
+    <div>
+        <label for="content_type">콘텐츠 타입:</label>
+        <select id="content_type" name="content_type" required>
+            <option value="이론" {% if content.content_type == '이론' %}selected{% endif %}>이론</option>
+            <option value="실습" {% if content.content_type == '실습' %}selected{% endif %}>실습</option>
+        </select>
+    </div>
+    <div>
+        <label for="title">제목:</label>
+        <input type="text" id="title" name="title" value="{{ content.title }}" required>
     </div>
 
     <div id="editor-area">
@@ -39,6 +61,9 @@
         <label for="pdf_file">PDF 파일:</label>
         <p>현재 파일: {{ content.pdf_path.split('_')[-1] if content.pdf_path else '없음' }} (새 파일을 업로드하면 덮어씁니다)</p>
         <input type="file" id="pdf_file" name="pdf_file" accept=".pdf">
+        <div>
+            <label><input type="checkbox" name="allow_download" value="1" {% if content.allow_download %}checked{% endif %}> PDF 파일 다운로드 허용</label>
+        </div>
     </div>
 
     <div class="form-actions">
