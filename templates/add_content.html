@@ -63,4 +63,31 @@
 
     <div class="form-actions">
         <a href="{{ url_for('manage_content') }}" class="btn-cancel">취소</a>
-        <button type="submit" class
+        <button type="submit" class="btn-submit">등록하기</button>
+    </div>
+</form>
+
+<script>
+document.querySelectorAll('input[name="storage_type"]').forEach((elem) => {
+    elem.addEventListener("change", function(event) {
+        if (event.target.value === "pdf") {
+            document.getElementById('pdf-area').style.display = 'block';
+            document.getElementById('editor-area').style.display = 'none';
+            document.getElementById('summernote').required = false;
+            document.getElementById('pdf_file').required = true;
+        } else {
+            document.getElementById('pdf-area').style.display = 'none';
+            document.getElementById('editor-area').style.display = 'block';
+            document.getElementById('summernote').required = true;
+            document.getElementById('pdf_file').required = false;
+        }
+    });
+});
+document.addEventListener('DOMContentLoaded', function() {
+    document.querySelector('input[name="storage_type"][value="editor"]').dispatchEvent(new Event('change'));
+});
+</script>
+
+{% include '_editor_assets.html' %}
+
+{% endblock %}
