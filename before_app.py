@@ -1,40 +1,23 @@
 import os
-from flask import Flask, render_template, request, redirect, url_for, session, flash
+import re
+from datetime import datetime, timedelta
+import calendar
+from dotenv import load_dotenv, find_dotenv
+from flask import Flask, render_template, request, redirect, url_for, session, flash, jsonify,send_from_directory
 from werkzeug.security import generate_password_hash, check_password_hash
 import pymysql.cursors
-from dotenv import load_dotenv, find_dotenv
-import calendar
-from datetime import datetime, timedelta
-import re  # 암호 규칙 검증을 위한 정규식 모듈
-import random # OTP 생성을 위한 모듈
+import uuid
+from werkzeug.utils import secure_filename
 
-# .env 파일의 절대 경로를 명시하여 환경 변수를 로드합니다.
-# Apache/mod_wsgi 환경에서 .env 로딩 문제가 발생할 경우를 대비합니다.
 dotenv_path = find_dotenv('/var/www/html/your_flask_app/.env')
 if os.path.exists(dotenv_path):
     load_dotenv(dotenv_path)
-    print("DEBUG: .env variables loaded from explicit path.") # 디버깅용 로그
-else:
-    print(f"WARNING: .env file not found at {dotenv_path}. Environment variables might not be loaded.") # 디버깅용 로그
 
-# Flask 애플리케이션 인스턴스 생성
 app = Flask(__name__)
+# ★★★ 추가된 부분: 최대 요청 크기를 100MB로 설정 ★★★
+app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024  # 100MB
+app.secret_key = os.getenv('FLASK_SECRET_KEY', os.urandom(24).hex())
 
-# FLASK_SECRET_KEY 로딩 및 처리 로직
-# 환경 변수에서 SECRET_KEY를 가져옵니다. 없을 경우 임시 키를 생성합니다.
-# 프로덕션 환경에서는 반드시 .env에 유효하고 고유한 키가 존재해야 합니다.
-flask_secret_key = os.getenv('FLASK_SECRET_KEY')
-if not flask_secret_key:
-    flask_secret_key = os.urandom(24).hex() # 임시 키 생성
-    print(f"WARNING: FLASK_SECRET_KEY not found in .env. Using newly generated key for this run: {flask_secret_key}") # 디버깅용 로그
-    print("Please add 'FLASK_SECRET_KEY={}' to your .env file for persistent security.".format(flask_secret_key)) # 디버깅용 로그
-
-app.secret_key = flask_secret_key
-print(f"DEBUG: Flask secret key loaded: {'exists' if app.secret_key else 'NOT FOUND'}") # 디버깅용 로그
-
-
-# 데이터베이스 연결 설정
-# 환경 변수가 설정되지 않았을 경우 사용할 기본값(폴백)을 지정합니다.
 DB_CONFIG = {
     'host': os.getenv('DB_HOST', '192.168.0.13'),
     'user': os.getenv('DB_USER', 'flask_user'),
@@ -44,125 +27,242 @@ DB_CONFIG = {
     'cursorclass': pymysql.cursors.DictCursor
 }
 
-
 def get_db_connection():
     """데이터베이스 연결을 설정하고 반환합니다."""
-    print("DEBUG: Attempting to get DB connection...") # 디버깅용 로그
     try:
         conn = pymysql.connect(**DB_CONFIG)
-        print("DEBUG: DB connection successful!") # 디버깅용 로그
         return conn
     except pymysql.Error as e:
-        print(f"DEBUG: DB connection failed in get_db_connection: {e}") # 디버깅용 로그
         flash('데이터베이스 연결 오류가 발생했습니다. 잠시 후 다시 시도해주세요.', 'error')
+        print(f"DB Connection Error: {e}") # 서버 로그에는 에러를 남김
         raise
 
-# --- 사용자 인증 관련 라우트 ---
 # --- Helper Functions ---
-
 def is_password_strong(password):
-    """암호 복잡도 규칙을 검증합니다."""
-    # 1. 길이 검사 (8자 이상)
+    """암호 복잡도 규칙(8자 이상, 대/소문자, 숫자, 특수문자 조합)을 검증합니다."""
     if len(password) < 8:
         return False
-    
-    # 2. 4가지 조합 검사 (대문자, 소문자, 숫자, 특수문자)
     rules = [
-        lambda s: any(c.isupper() for c in s),  # 대문자
-        lambda s: any(c.islower() for c in s),  # 소문자
-        lambda s: any(c.isdigit() for c in s),  # 숫자
-        lambda s: any(c in "!@#$%^&*()_+=:;\"'><.,?/[]}{" for c in s) # 특수문자
+        any(c.isupper() for c in password),
+        any(c.islower() for c in password),
+        any(c.isdigit() for c in password),
+        any(c in "!@#$%^&*()_+=:;\"'><.,?/[]}{" for c in password)
     ]
-    
-    if sum(rule(password) for rule in rules) < 4:
-        return False
-        
-    return True
+    return sum(rules) == 4
 
-def send_sms_otp(phone_number, otp):
-    """
-    실제 SMS API 연동을 위한 함수 (개발용 시뮬레이션)
-    실제 서비스에서는 이 부분에 Twilio, CoolSMS, Aligo 등 SMS API 연동 코드를 작성합니다.
-    """
-    print("--- SMS API SIMULATION ---")
-    print(f"To: {phone_number}")
-    print(f"Message: Your verification code is {otp}")
-    print("--------------------------")
-    # 실제로는 여기서 API 호출 결과를 반환해야 합니다. (True/False)
-    return True
+def is_valid_phone_number(phone_number):
+    """대한민국 핸드폰 번호 형식인지 정규표현식으로 검증합니다."""
+    pattern = re.compile(r'^(010\d{8}|01[1,6-9]\d{7,8})$')
+    return pattern.match(phone_number)
+
+def is_admin():
+    """세션에 로그인된 사용자가 관리자인지 확인하는 헬퍼 함수"""
+    return 'username' in session and session['username'] in ['kevin', 'kwangjin']
 
 # --- 사용자 인증 및 암호 재설정 관련 라우트 ---
-
 @app.route('/')
 def index():
     if 'loggedin' in session:
-        return render_template('main_logged_in.html', username=session['username'])
+        return render_template('main_logged_in.html')
     return render_template('default.html')
-
 
 @app.route('/register', methods=['POST'])
 def register():
-    """사용자 등록을 처리합니다. (휴대폰 번호, 암호 규칙 추가)"""
     username = request.form['username'].strip()
     phone_number = request.form['phone_number'].strip()
     password = request.form['password'].strip()
 
-    # 1. 입력 값 유효성 검사
-    if not username or not password or not phone_number:
+    if not all([username, phone_number, password]):
         flash('사용자 이름, 휴대폰 번호, 비밀번호를 모두 입력해주세요.', 'error')
         return redirect(url_for('index'))
-    
-    # 2. 휴대폰 번호 형식 검사 (숫자로만 구성)
-    if not phone_number.isdigit():
-        flash('휴대폰 번호는 숫자만 입력해주세요.', 'error')
+
+    if not is_valid_phone_number(phone_number):
+        flash('올바른 핸드폰 번호 형식이 아닙니다. (예: 01012345678)', 'error')
         return redirect(url_for('index'))
 
-    # 3. 암호 복잡도 규칙 검사
     if not is_password_strong(password):
         flash('비밀번호는 8자 이상이며, 영문 대/소문자, 숫자, 특수문자를 모두 포함해야 합니다.', 'error')
         return redirect(url_for('index'))
 
     hashed_password = generate_password_hash(password)
-
     conn = None
     try:
         conn = get_db_connection()
         with conn.cursor() as cursor:
-            # 사용자 이름 중복 확인
             cursor.execute("SELECT id FROM users WHERE username = %s", (username,))
             if cursor.fetchone():
                 flash('이미 존재하는 사용자 이름입니다.', 'error')
                 return redirect(url_for('index'))
-            
-            # 휴대폰 번호 중복 확인
+
             cursor.execute("SELECT id FROM users WHERE phone_number = %s", (phone_number,))
             if cursor.fetchone():
                 flash('이미 등록된 휴대폰 번호입니다.', 'error')
                 return redirect(url_for('index'))
 
-            # 새 사용자 삽입
             sql = "INSERT INTO users (username, phone_number, password) VALUES (%s, %s, %s)"
             cursor.execute(sql, (username, phone_number, hashed_password))
         conn.commit()
         flash('회원가입에 성공했습니다! 이제 로그인할 수 있습니다.', 'success')
     except Exception as e:
-        print(f"데이터베이스 오류 (회원가입): {e}")
         flash('회원가입에 실패했습니다. 잠시 후 다시 시도해주세요.', 'error')
     finally:
         if conn:
             conn.close()
     return redirect(url_for('index'))
 
+# 관리자 학습 컨텐츠 관리
+@app.route('/admin/upload_image', methods=['POST'])
+def upload_image():
+    """Summernote 에디터에서 이미지 업로드를 처리합니다."""
+    if not is_admin():
+        return jsonify({'error': '권한이 없습니다.'}), 403
+
+    if 'file' not in request.files:
+        return jsonify({'error': '파일이 없습니다.'}), 400
+
+    file = request.files['file']
+    if file.filename == '':
+        return jsonify({'error': '파일이 선택되지 않았습니다.'}), 400
+
+    if file:
+        filename = secure_filename(file.filename)
+        extension = filename.rsplit('.', 1)[1].lower()
+        unique_filename = f"{uuid.uuid4()}.{extension}"
+
+        allowed_extensions = {'png', 'jpg', 'jpeg', 'gif'}
+        if extension not in allowed_extensions:
+            return jsonify({'error': '허용되지 않는 파일 형식입니다.'}), 400
+
+        save_path = os.path.join(app.root_path, 'static/uploads', unique_filename)
+
+        try:
+            file.save(save_path)
+            url = url_for('static', filename=f'uploads/{unique_filename}')
+            return jsonify({'url': url})
+        except Exception as e:
+            app.logger.error(f"Image save failed: {e}", exc_info=True)
+            return jsonify({'error': '파일 저장 중 서버 오류가 발생했습니다.'}), 500
+
+    return jsonify({'error': '알 수 없는 오류가 발생했습니다.'}), 500
+
+@app.route('/admin/content')
+def manage_content():
+    """전체 학습 콘텐츠 목록을 보여주는 관리 페이지"""
+    if not is_admin():
+        flash('접근 권한이 없습니다.', 'error')
+        return redirect(url_for('index'))
+
+    conn = None
+    try:
+        conn = get_db_connection()
+        with conn.cursor() as cursor:
+            sql = """
+                SELECT c.id, c.title, c.content_type, s.name as subject_name
+                FROM contents c
+                JOIN subjects s ON c.subject_id = s.id
+                ORDER BY s.name, c.created_at DESC
+            """
+            cursor.execute(sql)
+            contents = cursor.fetchall()
+        return render_template('manage_content.html', contents=contents)
+    except Exception as e:
+        app.logger.error(f"Failed to load content list: {e}", exc_info=True)
+        flash('콘텐츠 목록을 불러오는 중 오류가 발생했습니다.', 'error')
+        return redirect(url_for('admin_dashboard'))
+    finally:
+        if conn:
+            conn.close()
+
+# app.py
+
+@app.route('/admin/edit_content/<int:content_id>', methods=['GET', 'POST'])
+def edit_content(content_id):
+    """기존 학습 콘텐츠를 수정하는 페이지 (단순화 버전)"""
+    if not is_admin():
+        flash('접근 권한이 없습니다.', 'error')
+        return redirect(url_for('index'))
+
+    conn = None
+    try:
+        conn = get_db_connection()
+        with conn.cursor() as cursor:
+            if request.method == 'POST':
+                storage_type = request.form.get('storage_type')
+                subject_id = request.form.get('subject_id')
+                content_type = request.form.get('content_type')
+                title = request.form.get('title', '').strip()
+
+                if storage_type == 'editor':
+                    body = request.form.get('body', '').strip()
+                    sql = "UPDATE contents SET subject_id=%s, content_type=%s, storage_type='editor', title=%s, body=%s, pdf_path=NULL WHERE id=%s"
+                    cursor.execute(sql, (subject_id, content_type, title, body, content_id))
+
+                elif storage_type == 'pdf':
+                    pdf_path_updated = False
+                    if 'pdf_file' in request.files and request.files['pdf_file'].filename != '':
+                        file = request.files['pdf_file']
+                        if file and allowed_pdf_file(file.filename):
+                            filename = secure_filename(file.filename)
+                            unique_filename = f"{uuid.uuid4()}_{filename}"
+                            save_path = os.path.join(app.root_path, 'static/pdfs', unique_filename)
+                            file.save(save_path)
+                            pdf_path = f"pdfs/{unique_filename}"
+                            sql = "UPDATE contents SET subject_id=%s, content_type=%s, storage_type='pdf', title=%s, body=NULL, pdf_path=%s WHERE id=%s"
+                            cursor.execute(sql, (subject_id, content_type, title, pdf_path, content_id))
+                            pdf_path_updated = True
+
+                    if not pdf_path_updated:
+                        sql = "UPDATE contents SET subject_id=%s, content_type=%s, storage_type='pdf', title=%s WHERE id=%s"
+                        cursor.execute(sql, (subject_id, content_type, title, content_id))
+
+                conn.commit()
+                flash('콘텐츠가 성공적으로 수정되었습니다.', 'success')
+                return redirect(url_for('manage_content'))
+
+            # GET 요청 처리
+            cursor.execute("SELECT * FROM contents WHERE id = %s", (content_id,))
+            content = cursor.fetchone()
+            cursor.execute("SELECT id, name FROM subjects ORDER BY name ASC")
+            subjects = cursor.fetchall()
+            return render_template('edit_content.html', content=content, subjects=subjects)
+
+    except Exception as e:
+        app.logger.error(f"Failed to edit content: {e}", exc_info=True)
+        flash('콘텐츠 처리 중 오류가 발생했습니다.', 'error')
+        return redirect(url_for('manage_content'))
+    finally:
+        if conn:
+            conn.close()
+
+@app.route('/admin/delete_content/<int:content_id>', methods=['POST'])
+def delete_content(content_id):
+    """특정 학습 콘텐츠를 삭제합니다."""
+    if not is_admin():
+        flash('접근 권한이 없습니다.', 'error')
+        return redirect(url_for('index'))
+
+    conn = None
+    try:
+        conn = get_db_connection()
+        with conn.cursor() as cursor:
+            cursor.execute("DELETE FROM contents WHERE id = %s", (content_id,))
+        conn.commit()
+        flash('콘텐츠가 삭제되었습니다.', 'success')
+    except Exception as e:
+        app.logger.error(f"Failed to delete content: {e}", exc_info=True)
+        flash('콘텐츠 삭제 중 오류가 발생했습니다.', 'error')
+    finally:
+        if conn:
+            conn.close()
+    return redirect(url_for('manage_content'))
+
 
 @app.route('/login', methods=['POST'])
 def login():
-    """사용자 로그인을 처리합니다."""
     username = request.form['username'].strip()
     password = request.form['password'].strip()
-    print(f"DEBUG: 로그인 시도 사용자: {username}") # 디버깅용 로그
 
     if not username or not password:
-        print("DEBUG: 로그인 시도: 사용자 이름 또는 비밀번호가 비어 있습니다.") # 디버깅용 로그
         flash('사용자 이름과 비밀번호를 모두 입력해주세요.', 'error')
         return redirect(url_for('index'))
 
@@ -178,109 +278,63 @@ def login():
                 session['loggedin'] = True
                 session['id'] = user['id']
                 session['username'] = user['username']
-                print(f"DEBUG: 사용자 {username} 로그인 성공. 대시보드로 리디렉션.") # 디버깅용 로그
                 flash(f'환영합니다, {user["username"]}님!', 'success')
-                return redirect(url_for('dashboard')) # 로그인 성공 시 대시보드로 리디렉션
+                return redirect(url_for('index'))
             else:
-                print(f"DEBUG: 사용자 {username} 로그인 실패: 잘못된 자격 증명.") # 디버깅용 로그
-                flash('잘못된 사용자 이름 또는 비밀번호입니다. 다시 시도해주세요.', 'error')
+                flash('잘못된 사용자 이름 또는 비밀번호입니다.', 'error')
     except Exception as e:
-        print(f"DEBUG: 로그인 처리 중 일반 오류: {e}") # 디버깅용 로그
-        flash('로그인에 실패했습니다. 서버 오류입니다. 잠시 후 다시 시도해주세요.', 'error')
+        flash('로그인에 실패했습니다. 서버 오류입니다.', 'error')
     finally:
         if conn:
             conn.close()
-            print("DEBUG: 로그인 라우트에서 DB 연결 닫음.") # 디버깅용 로그
     return redirect(url_for('index'))
 
 @app.route('/logout')
 def logout():
-    """현재 사용자를 로그아웃합니다."""
-    session.pop('loggedin', None)
-    session.pop('id', None)
-    session.pop('username', None)
+    session.clear()
     flash('성공적으로 로그아웃되었습니다.', 'success')
     return redirect(url_for('index'))
 
-@app.route('/dashboard')
-def dashboard():
-    """
-    로그인한 사용자에게는 메인 페이지로 리디렉션하고,
-    로그아웃 상태이면 로그인 페이지로 리디렉션합니다.
-    """
-    if 'loggedin' in session:
-        return redirect(url_for('index')) # 로그인 상태이면 새로운 메인 페이지 (index)로 리디렉션
-    flash('이 페이지에 접근하려면 로그인해야 합니다.', 'error')
-    return redirect(url_for('index')) # 로그아웃 상태이면 로그인 페이지 (index)로 리디렉션
-
 @app.route('/forgot_password', methods=['GET', 'POST'])
 def forgot_password():
-    """암호 분실 시 휴대폰 번호를 입력받아 인증을 시작합니다."""
     if request.method == 'POST':
+        username = request.form['username'].strip()
         phone_number = request.form['phone_number'].strip()
-        if not phone_number.isdigit():
-            flash('유효한 휴대폰 번호를 입력해주세요.', 'error')
+
+        if not username or not is_valid_phone_number(phone_number):
+            flash('아이디와 올바른 핸드폰 번호 형식을 모두 입력해주세요.', 'error')
             return redirect(url_for('forgot_password'))
 
         conn = None
         try:
             conn = get_db_connection()
             with conn.cursor() as cursor:
-                cursor.execute("SELECT id FROM users WHERE phone_number = %s", (phone_number,))
+                sql = "SELECT id FROM users WHERE username = %s AND phone_number = %s"
+                cursor.execute(sql, (username, phone_number))
                 user = cursor.fetchone()
-
                 if user:
-                    # 6자리 숫자 OTP 생성
-                    otp = str(random.randint(100000, 999999))
-                    # OTP 및 관련 정보를 세션에 저장 (유효시간 3분)
-                    session['otp'] = otp
-                    session['otp_phone_number'] = phone_number
-                    session['otp_timestamp'] = datetime.now().timestamp()
-
-                    # SMS 발송 시뮬레이션
-                    send_sms_otp(phone_number, otp)
-
-                    flash('인증번호가 발송되었습니다. 3분 안에 입력해주세요.', 'success')
+                    session['phone_to_reset'] = phone_number
+                    flash('계정이 확인되었습니다. 새 비밀번호를 설정해주세요.', 'success')
                     return redirect(url_for('reset_password'))
                 else:
-                    flash('해당 휴대폰 번호로 가입된 계정이 없습니다.', 'error')
+                    flash('입력하신 정보와 일치하는 계정을 찾을 수 없습니다.', 'error')
         except Exception as e:
-            print(f"암호 찾기 오류: {e}")
             flash('오류가 발생했습니다. 잠시 후 다시 시도해주세요.', 'error')
         finally:
             if conn:
                 conn.close()
-
     return render_template('forgot_password.html')
 
 @app.route('/reset_password', methods=['GET', 'POST'])
 def reset_password():
-    """OTP와 새 비밀번호를 입력받아 암호를 변경합니다."""
-    # 세션에 OTP 정보가 없으면 비정상 접근으로 간주
-    if 'otp_phone_number' not in session:
-        flash('인증 절차를 먼저 진행해주세요.', 'error')
+    if 'phone_to_reset' not in session:
+        flash('먼저 계정 확인 절차를 진행해주세요.', 'error')
         return redirect(url_for('forgot_password'))
 
     if request.method == 'POST':
-        user_otp = request.form['otp'].strip()
         new_password = request.form['new_password'].strip()
         confirm_password = request.form['confirm_password'].strip()
 
-        # 1. OTP 유효시간 검사 (3분)
-        if (datetime.now().timestamp() - session['otp_timestamp']) > 180:
-            flash('인증번호 유효시간이 초과되었습니다. 다시 시도해주세요.', 'error')
-            # 세션 정리
-            session.pop('otp', None)
-            session.pop('otp_phone_number', None)
-            session.pop('otp_timestamp', None)
-            return redirect(url_for('forgot_password'))
-
-        # 2. OTP 일치 여부 검사
-        if user_otp != session.get('otp'):
-            flash('인증번호가 일치하지 않습니다.', 'error')
-            return render_template('reset_password.html')
-
-        # 3. 새 비밀번호 일치 여부 및 복잡도 검사
         if new_password != confirm_password:
             flash('새 비밀번호가 일치하지 않습니다.', 'error')
             return render_template('reset_password.html')
@@ -289,9 +343,8 @@ def reset_password():
             flash('새 비밀번호는 8자 이상이며, 영문 대/소문자, 숫자, 특수문자를 모두 포함해야 합니다.', 'error')
             return render_template('reset_password.html')
 
-        # 모든 검증 통과, 비밀번호 업데이트
         hashed_password = generate_password_hash(new_password)
-        phone_number = session['otp_phone_number']
+        phone_number = session['phone_to_reset']
 
         conn = None
         try:
@@ -300,25 +353,15 @@ def reset_password():
                 sql = "UPDATE users SET password = %s WHERE phone_number = %s"
                 cursor.execute(sql, (hashed_password, phone_number))
             conn.commit()
-
             flash('비밀번호가 성공적으로 변경되었습니다. 새로운 비밀번호로 로그인해주세요.', 'success')
-
-            # 사용 완료된 세션 정보 정리
-            session.pop('otp', None)
-            session.pop('otp_phone_number', None)
-            session.pop('otp_timestamp', None)
-
+            session.pop('phone_to_reset', None)
             return redirect(url_for('index'))
         except Exception as e:
-            print(f"비밀번호 업데이트 오류: {e}")
             flash('비밀번호 변경 중 오류가 발생했습니다.', 'error')
         finally:
             if conn:
                 conn.close()
-
     return render_template('reset_password.html')
-
-
 
 
 # --- 게시판 관련 라우트 ---
@@ -1024,13 +1067,12 @@ def view_content(content_id):
         return redirect(url_for('index'))
 
     conn = None
-    content = None
-    subject_id_for_redirect = None # 리디렉션을 위한 변수
     try:
         conn = get_db_connection()
         with conn.cursor() as cursor:
             sql = """
-                SELECT c.id, c.title, c.body, c.content_type, c.created_at, c.subject_id, c.is_active, s.name as subject_name
+                SELECT c.id, c.title, c.body, c.content_type, c.storage_type,
+                       c.pdf_path, c.created_at, c.is_active, s.name as subject_name, c.subject_id
                 FROM contents c
                 JOIN subjects s ON c.subject_id = s.id
                 WHERE c.id = %s
@@ -1041,28 +1083,22 @@ def view_content(content_id):
             if not content:
                 flash('존재하지 않는 콘텐츠입니다.', 'error')
                 return redirect(url_for('study_list'))
-            
-            subject_id_for_redirect = content['subject_id']
 
-            # 접근 제어 로직
-            # is_active가 False(0)이면 접근을 차단합니다.
-            # 관리자(kevin, kwangjin)는 비활성 상태에서도 접근 가능합니다.
-            if not content['is_active'] and session.get('username') not in ['kevin', 'kwangjin']:
-                flash('아직 활성화되지 않은 콘텐츠입니다. 관리자에게 문의하세요.', 'error')
-                return redirect(url_for('subject_detail', subject_id=subject_id_for_redirect))
+            # ★★★ 수정된 최종 접근 제어 로직 ★★★
+            # 관리자가 아닌 경우에만, 비활성 콘텐츠 접근을 차단합니다.
+            if not is_admin() and not content['is_active']:
+                flash('아직 활성화되지 않은 콘텐츠입니다.', 'error')
+                return redirect(url_for('subject_detail', subject_id=content['subject_id']))
+
+            return render_template('view_content.html', content=content)
 
     except Exception as e:
-        print(f"데이터베이스 오류 (콘텐츠 조회): {e}")
-        flash('콘텐츠를 불러오는 데 실패했습니다.', 'error')
-        if subject_id_for_redirect:
-            return redirect(url_for('subject_detail', subject_id=subject_id_for_redirect))
-        else:
-            return redirect(url_for('study_list'))
+        app.logger.error(f"Failed to view content: {e}", exc_info=True)
+        flash('콘텐츠를 불러오는 중 오류가 발생했습니다.', 'error')
+        return redirect(url_for('study_list'))
     finally:
         if conn:
             conn.close()
-
-    return render_template('view_content.html', content=content, username=session['username'])
 
 @app.route('/content/toggle_status/<int:content_id>', methods=['POST'])
 def toggle_content_status(content_id):
@@ -1084,7 +1120,7 @@ def toggle_content_status(content_id):
             if not content:
                 flash('존재하지 않는 콘텐츠입니다.', 'error')
                 return redirect(url_for('study_list'))
-            
+
             subject_id = content['subject_id']
 
             # is_active 상태를 현재와 반대로(0->1, 1->0) 업데이트합니다.
@@ -1101,7 +1137,204 @@ def toggle_content_status(content_id):
         if conn:
             conn.close()
 
+# --- ★★★ 관리자 페이지 관련 라우트 (신규 추가) ★★★ ---
 
+def is_admin():
+    """세션에 로그인된 사용자가 관리자인지 확인하는 헬퍼 함수"""
+    return 'username' in session and session['username'] in ['kevin', 'kwangjin']
+
+@app.route('/admin')
+def admin_dashboard():
+    """관리자 메인 대시보드 페이지"""
+    # 관리자가 아니면 접근 차단
+    if not is_admin():
+        flash('접근 권한이 없습니다.', 'error')
+        return redirect(url_for('index'))
+
+    return render_template('admin_dashboard.html', username=session['username'])
+
+def allowed_pdf_file(filename):
+    """PDF 파일 확장자만 허용하는지 확인하는 헬퍼 함수"""
+    return '.' in filename and \
+           filename.rsplit('.', 1)[1].lower() in {'pdf'}
+
+@app.route('/admin/add_content', methods=['GET', 'POST'])
+def add_content():
+    """새로운 학습 콘텐츠를 등록하는 페이지 및 처리 (단순화 버전)"""
+    if not is_admin():
+        flash('접근 권한이 없습니다.', 'error')
+        return redirect(url_for('index'))
+
+    conn = None
+    try:
+        conn = get_db_connection()
+        with conn.cursor() as cursor:
+            cursor.execute("SELECT id, name FROM subjects ORDER BY name ASC")
+            subjects = cursor.fetchall()
+
+            if request.method == 'POST':
+                storage_type = request.form.get('storage_type')
+                subject_id = request.form.get('subject_id')
+                content_type = request.form.get('content_type')
+                title = request.form.get('title', '').strip()
+
+                if not all([storage_type, subject_id, content_type, title]):
+                    flash('모든 필수 항목을 입력해주세요.', 'error')
+                    return render_template('add_content.html', subjects=subjects)
+
+                if storage_type == 'editor':
+                    body = request.form.get('body', '').strip()
+                    if not body:
+                        flash('에디터 내용을 입력해주세요.', 'error')
+                        return render_template('add_content.html', subjects=subjects)
+
+                    sql = "INSERT INTO contents (subject_id, content_type, storage_type, title, body, is_active) VALUES (%s, %s, %s, %s, %s, 0)"
+                    cursor.execute(sql, (subject_id, content_type, storage_type, title, body))
+
+                elif storage_type == 'pdf':
+                    if 'pdf_file' not in request.files or request.files['pdf_file'].filename == '':
+                        flash('PDF 파일을 선택해주세요.', 'error')
+                        return render_template('add_content.html', subjects=subjects)
+
+                    file = request.files['pdf_file']
+                    if not (file and allowed_pdf_file(file.filename)):
+                        flash('PDF 파일만 업로드할 수 있습니다.', 'error')
+                        return render_template('add_content.html', subjects=subjects)
+
+                    filename = secure_filename(file.filename)
+                    unique_filename = f"{uuid.uuid4()}_{filename}"
+                    save_path = os.path.join(app.root_path, 'static/pdfs', unique_filename)
+                    file.save(save_path)
+                    pdf_path = f"pdfs/{unique_filename}"
+
+                    sql = "INSERT INTO contents (subject_id, content_type, storage_type, title, pdf_path, is_active) VALUES (%s, %s, %s, %s, %s, 0)"
+                    cursor.execute(sql, (subject_id, content_type, storage_type, title, pdf_path))
+
+                conn.commit()
+                flash('새로운 콘텐츠가 성공적으로 등록되었습니다.', 'success')
+                return redirect(url_for('manage_content'))
+
+            return render_template('add_content.html', subjects=subjects)
+
+    except Exception as e:
+        app.logger.error(f"Failed to add content: {e}", exc_info=True)
+        flash('콘텐츠 추가 중 오류가 발생했습니다.', 'error')
+        return redirect(url_for('admin_dashboard'))
+    finally:
+        if conn:
+            conn.close()
+
+# 신규 추가: 과목 관리(CRUD) 관련 라우트
+
+@app.route('/admin/subjects', methods=['GET', 'POST'])
+def manage_subjects():
+    """과목 목록을 보고, 새 과목을 등록하는 페이지"""
+    if not is_admin():
+        flash('접근 권한이 없습니다.', 'error')
+        return redirect(url_for('index'))
+
+    conn = None
+    try:
+        conn = get_db_connection()
+        # 새 과목 등록 처리 (POST)
+        if request.method == 'POST':
+            name = request.form['name'].strip()
+            if name:
+                with conn.cursor() as cursor:
+                    # 중복 이름 확인
+                    cursor.execute("SELECT id FROM subjects WHERE name = %s", (name,))
+                    if cursor.fetchone():
+                        flash('이미 존재하는 과목 이름입니다.', 'error')
+                    else:
+                        cursor.execute("INSERT INTO subjects (name) VALUES (%s)", (name,))
+                        conn.commit()
+                        flash('새로운 과목이 성공적으로 등록되었습니다.', 'success')
+            else:
+                flash('과목 이름을 입력해주세요.', 'error')
+            return redirect(url_for('manage_subjects'))
+
+        # 과목 목록 조회 (GET)
+        with conn.cursor() as cursor:
+            cursor.execute("SELECT id, name FROM subjects ORDER BY name ASC")
+            subjects = cursor.fetchall()
+
+        return render_template('manage_subjects.html', subjects=subjects, username=session['username'])
+
+    except Exception as e:
+        print(f"과목 관리 페이지 오류: {e}")
+        flash('과목 관리 페이지를 로드하는 중 오류가 발생했습니다.', 'error')
+        return redirect(url_for('admin_dashboard'))
+    finally:
+        if conn:
+            conn.close()
+
+@app.route('/admin/edit_subject/<int:subject_id>', methods=['GET', 'POST'])
+def edit_subject(subject_id):
+    """기존 과목의 이름을 수정하는 페이지"""
+    if not is_admin():
+        flash('접근 권한이 없습니다.', 'error')
+        return redirect(url_for('index'))
+
+    conn = None
+    try:
+        conn = get_db_connection()
+        with conn.cursor() as cursor:
+            # POST 요청 처리 (이름 수정)
+            if request.method == 'POST':
+                new_name = request.form['name'].strip()
+                if not new_name:
+                    flash('과목 이름은 비워둘 수 없습니다.', 'error')
+                else:
+                    # 다른 과목과 이름이 중복되는지 확인
+                    cursor.execute("SELECT id FROM subjects WHERE name = %s AND id != %s", (new_name, subject_id))
+                    if cursor.fetchone():
+                        flash('이미 존재하는 과목 이름입니다.', 'error')
+                    else:
+                        cursor.execute("UPDATE subjects SET name = %s WHERE id = %s", (new_name, subject_id))
+                        conn.commit()
+                        flash('과목 이름이 성공적으로 수정되었습니다.', 'success')
+                        return redirect(url_for('manage_subjects'))
+
+            # GET 요청 처리 (수정할 과목 정보 불러오기)
+            cursor.execute("SELECT id, name FROM subjects WHERE id = %s", (subject_id,))
+            subject = cursor.fetchone()
+            if not subject:
+                flash('존재하지 않는 과목입니다.', 'error')
+                return redirect(url_for('manage_subjects'))
+
+            return render_template('edit_subject.html', subject=subject, username=session['username'])
+
+    except Exception as e:
+        print(f"과목 수정 오류: {e}")
+        flash('과목 수정 중 오류가 발생했습니다.', 'error')
+        return redirect(url_for('manage_subjects'))
+    finally:
+        if conn:
+            conn.close()
+
+@app.route('/admin/delete_subject/<int:subject_id>', methods=['POST'])
+def delete_subject(subject_id):
+    """특정 과목을 삭제하는 기능"""
+    if not is_admin():
+        flash('접근 권한이 없습니다.', 'error')
+        return redirect(url_for('index'))
+
+    conn = None
+    try:
+        conn = get_db_connection()
+        with conn.cursor() as cursor:
+            # 경고: ON DELETE CASCADE로 인해 연결된 contents도 모두 삭제됩니다.
+            cursor.execute("DELETE FROM subjects WHERE id = %s", (subject_id,))
+        conn.commit()
+        flash('과목 및 관련 콘텐츠가 모두 삭제되었습니다.', 'success')
+    except Exception as e:
+        print(f"과목 삭제 오류: {e}")
+        flash('과목 삭제 중 오류가 발생했습니다.', 'error')
+    finally:
+        if conn:
+            conn.close()
+
+    return redirect(url_for('manage_subjects'))
 
 
 # 개발용 블록입니다. Apache/mod_wsgi로 배포 시에는 사용되지 않습니다.
