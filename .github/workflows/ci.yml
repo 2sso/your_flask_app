@@ -11,25 +11,25 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.9'
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.9'
 
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
 
-    # 1. 문법 및 스타일 체크 (가벼운 테스트)
-    - name: Lint with flake8
-      run: |
-        pip install flake8
-    # 프로젝트 루트와 주요 폴더만 검사하고, 가상환경(.venv) 등은 제외합니다.
-        flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics --exclude=.venv,venv,pycache
-    # 2. Docker 빌드 테스트 (ArgoCD 전단계 준비)
-    - name: Build Docker Image
-      run: |
-        docker build -t flask-app-test:latest .
+      - name: Lint with flake8
+        run: |
+          pip install flake8
+          # 가상환경 폴더와 캐시 폴더를 제외하고 검사합니다.
+          flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics --exclude=.venv,venv,__pycache__
+
+      - name: Build Docker Image
+        run: |
+          docker build -t flask-app-test:latest .
