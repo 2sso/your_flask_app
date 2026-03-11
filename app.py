@@ -1,5 +1,5 @@
 from flask import Flask, render_template, session, redirect, url_for
-from config import config
+from config import Config
 # 블루프린트 임포트 생략
 
 app = Flask(__name__)
