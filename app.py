@@ -1,6 +1,12 @@
 from flask import Flask, render_template, session, redirect, url_for
 from config import Config
 # 블루프린트 임포트 생략
+from blueprints.auth import auth_bp
+from blueprints.admin import admin_bp
+from blueprints.board import board_bp
+from blueprints.diary import diary_bp
+from blueprints.study import study_bp
+from blueprints.todos import todos_bp
 
 app = Flask(__name__)
 
