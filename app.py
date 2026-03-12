@@ -53,6 +53,8 @@ def create_app():
 
     return app
 
+app = create_app()
+
 if __name__ == "__main__":
     app = create_app()
     # 쿠버네티스 환경이므로 debug 모드는 꺼두는 것이 보안상 좋습니다.
