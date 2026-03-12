@@ -1,38 +1,191 @@
+# 1. Auth Service
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: flask-msa-app
-  namespace: default  # ArgoCD 설정에서 맞춘 네임스페이스와 동일해야 함
-  labels:
-    app: flask-app
+  name: flask-auth
 spec:
-  replicas: 1 
+  replicas: 1
   selector:
     matchLabels:
-      app: flask-app
+      app: flask-auth
   template:
     metadata:
       labels:
-        app: flask-app
+        app: flask-auth
     spec:
       containers:
-      - name: flask-container
-        # [주의] 본인의 Docker Hub ID로 변경하세요 (예: kildong/flask-app:latest)
-        image: 2sohyun/flask-app:latest
+      - name: auth
+        image: 2sohyun/flask-auth:latest
         ports:
         - containerPort: 5000
-        imagePullPolicy: Always
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: flask-app-service
-  namespace: default
+  name: auth-service
 spec:
   selector:
-    app: flask-app
+    app: flask-auth
   ports:
-    - protocol: TCP
-      port: 80
-      targetPort: 5000
-  type: ClusterIP
+  - port: 80
+    targetPort: 5000
+---
+# 2. Admin Service
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: flask-admin
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: flask-admin
+  template:
+    metadata:
+      labels:
+        app: flask-admin
+    spec:
+      containers:
+      - name: admin
+        image: 2sohyun/flask-admin:latest
+        ports:
+        - containerPort: 5000
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: admin-service
+spec:
+  selector:
+    app: flask-admin
+  ports:
+  - port: 80
+    targetPort: 5000
+---
+# 3. Board Service
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: flask-board
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: flask-board
+  template:
+    metadata:
+      labels:
+        app: flask-board
+    spec:
+      containers:
+      - name: board
+        image: 2sohyun/flask-board:latest
+        ports:
+        - containerPort: 5000
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: board-service
+spec:
+  selector:
+    app: flask-board
+  ports:
+  - port: 80
+    targetPort: 5000
+---
+# 4. Diary Service
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: flask-diary
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: flask-diary
+  template:
+    metadata:
+      labels:
+        app: flask-diary
+    spec:
+      containers:
+      - name: diary
+        image: 2sohyun/flask-diary:latest
+        ports:
+        - containerPort: 5000
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: diary-service
+spec:
+  selector:
+    app: flask-diary
+  ports:
+  - port: 80
+    targetPort: 5000
+---
+# 5. Todos Service
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: flask-todos
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: flask-todos
+  template:
+    metadata:
+      labels:
+        app: flask-todos
+    spec:
+      containers:
+      - name: todos
+        image: 2sohyun/flask-todos:latest
+        ports:
+        - containerPort: 5000
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: todos-service
+spec:
+  selector:
+    app: flask-todos
+  ports:
+  - port: 80
+    targetPort: 5000
+---
+# 6. Study Service
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: flask-study
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: flask-study
+  template:
+    metadata:
+      labels:
+        app: flask-study
+    spec:
+      containers:
+      - name: study
+        image: 2sohyun/flask-study:latest
+        ports:
+        - containerPort: 5000
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: study-service
+spec:
+  selector:
+    app: flask-study
+  ports:
+  - port: 80
+    targetPort: 5000
