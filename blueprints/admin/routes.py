@@ -1,3 +1,4 @@
+import re
 import os
 import uuid
 from flask import render_template, request, session, flash, redirect, url_for, jsonify, current_app
