@@ -1,4 +1,5 @@
 import re
+import os
 from flask import render_template, request, session, flash, redirect, url_for, current_app
 from werkzeug.security import generate_password_hash, check_password_hash
 from db import get_db_connection  # 공통 db 파일에서 가져옴

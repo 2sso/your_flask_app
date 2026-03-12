@@ -1,52 +1,59 @@
-from flask import Flask, render_template, session, redirect, url_for
-from config import Config
-# 블루프린트 임포트 생략
-from blueprints.auth import auth_bp
-from blueprints.admin import admin_bp
-from blueprints.board import board_bp
-from blueprints.diary import diary_bp
-from blueprints.study import study_bp
-from blueprints.todos import todos_bp
+import os
+from flask import Flask, session, redirect, url_for, render_template
+from config import Config  # DB_CONFIG 대신 전체 설정을 담은 Config 클래스 권장
 
-app = Flask(__name__)
-
-# Config 클래스에 정의된 설정들을 Flask 앱에 적용
-app.config.from_object(Config)
-
-# 필요한 경우 추가 설정 적용
-app.secret_key = Config.SECRET_KEY
-app.config['MAX_CONTENT_LENGTH'] = Config.MAX_CONTENT_LENGTH
-
-# --- 블루프린트 등록 (Blueprint Registration) ---
-# url_prefix를 설정하여 각 기능의 경로를 구분합니다.
-app.register_blueprint(auth_bp, url_prefix='/auth')
-app.register_blueprint(admin_bp, url_prefix='/admin')
-app.register_blueprint(board_bp, url_prefix='/board')
-app.register_blueprint(diary_bp, url_prefix='/diary')
-app.register_blueprint(study_bp, url_prefix='/study')
-app.register_blueprint(todos_bp, url_prefix='/todos')
-
-# --- 기본 메인 라우트 ---
-@app.route('/')
-def index():
-    """메인 페이지: 로그인 여부에 따라 대시보드 또는 로그인 페이지로 이동"""
-    if 'loggedin' in session:
-        # 로그인 상태라면 각 기능에 접근할 수 있는 메인 대시보드 표시
-        return render_template('index.html', username=session['username'])
+def create_app():
+    app = Flask(__name__)
     
-    # 로그인 상태가 아니라면 auth 블루프린트의 로그인 페이지로 이동
-    return redirect(url_for('auth.index'))
+    # 1. 공통 설정 적용 (Secret Key 등이 없으면 세션/로그인이 안 됩니다!)
+    app.config.from_object(Config)
+    app.secret_key = Config.SECRET_KEY 
 
-# --- 공통 에러 핸들러 ---
-@app.errorhandler(404)
-def page_not_found(e):
-    return render_template('404.html'), 404
+    # 2. 환경 변수에서 서비스 이름 가져오기
+    service_name = os.getenv('SERVICE_NAME', 'auth')
+    print(f"--- Starting {service_name} Service ---")
 
-@app.errorhandler(500)
-def internal_server_error(e):
-    return render_template('500.html'), 500
+    # 3. 서비스별 Blueprint 동적 등록
+    # [주의] __init__.py에 정의했다면 .routes 생략 가능 (구조에 따라 맞춤)
+    if service_name == 'auth':
+        from blueprints.auth.routes import auth_bp
+        app.register_blueprint(auth_bp, url_prefix='/auth')
+        
+    elif service_name == 'admin':
+        from blueprints.admin.routes import admin_bp
+        app.register_blueprint(admin_bp, url_prefix='/admin')
+        
+    elif service_name == 'board':
+        from blueprints.board.routes import board_bp
+        app.register_blueprint(board_bp, url_prefix='/board')
+        
+    elif service_name == 'diary':
+        from blueprints.diary.routes import diary_bp
+        app.register_blueprint(diary_bp, url_prefix='/diary')
+        
+    elif service_name == 'todos':
+        from blueprints.todos.routes import todos_bp
+        app.register_blueprint(todos_bp, url_prefix='/todos')
+        
+    elif service_name == 'study':
+        from blueprints.study.routes import study_bp
+        app.register_blueprint(study_bp, url_prefix='/study')
 
-# --- 앱 실행 ---
-if __name__ == '__main__':
-    # 디버그 모드: 코드 수정 시 자동 재시작 및 오류 메시지 상세 출력
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    # 4. 루트 경로 설정 (매우 중요!)
+    # 각 컨테이너가 '/' 접속 시 어디로 보낼지 결정합니다.
+    @app.route('/')
+    def index():
+        if 'loggedin' in session:
+            # 로그인 상태면 메인(index.html)을 보여주거나 각 서비스 메인으로 이동
+            return render_template('index.html', username=session.get('username'))
+        
+        # 로그인 안 되어 있으면 auth 서비스의 index(로그인창)로 이동
+        # MSA 환경에서는 외부 도메인이나 Ingress 주소로 리다이렉트가 필요할 수 있습니다.
+        return redirect(url_for(f'{service_name}.index'))
+
+    return app
+
+if __name__ == "__main__":
+    app = create_app()
+    # 쿠버네티스 환경이므로 debug 모드는 꺼두는 것이 보안상 좋습니다.
+    app.run(host='0.0.0.0', port=5000)
